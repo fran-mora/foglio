@@ -1,4 +1,4 @@
-import { EditorState, StateField } from "@codemirror/state";
+import { EditorState, StateField, StateEffect } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -241,6 +241,15 @@ class ImageWidget extends WidgetType {
   }
 }
 
+const dragTracker = EditorView.domEventHandlers({
+  mousedown(_event, view) {
+    if (!view.state.field(draggingField, false)) {
+      view.dispatch({ effects: setDragging.of(true) });
+    }
+    return false;
+  },
+});
+
 const taskClickHandler = EditorView.domEventHandlers({
   mousedown(e, view) {
     const t = e.target;
@@ -259,12 +268,31 @@ const taskClickHandler = EditorView.domEventHandlers({
   },
 });
 
+// True from mousedown until the button comes back up. Revealing markers mid-drag
+// would reflow the line under the pointer, so the reveal waits for the release.
+const setDragging = StateEffect.define();
+
+const draggingField = StateField.define({
+  create() {
+    return false;
+  },
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setDragging)) return e.value;
+    return value;
+  },
+});
+
 // Build live-preview decorations (inline + block) from the syntax tree.
 // Lives in a StateField because block decorations cannot come from a ViewPlugin.
 function buildDecorations(state) {
   const builder = [];
-  const cursor = state.selection.main.head;
-  const cursorLine = state.doc.lineAt(cursor).number;
+  // Hidden markers ("> ", "# ", "**", a link's URL) come back only when the
+  // caret is resting on a line. While the mouse is down or a selection is
+  // open they stay hidden: revealing them re-flows the line, which moves the
+  // text out from under the pointer and makes selecting by hand a fight.
+  const sel = state.selection.main;
+  const reveal = sel.empty && !state.field(draggingField, false);
+  const cursorLine = reveal ? state.doc.lineAt(sel.head).number : -1;
 
   const tagLines = (from, to, cls) => {
     let pos = from;
@@ -566,6 +594,8 @@ const state = EditorState.create({
       extensions: [Table, TaskList, Strikethrough, Autolink],
     }),
     syntaxHighlighting(classHighlighter),
+    draggingField,
+    dragTracker,
     taskClickHandler,
     livePreview,
     search({ top: true }),
@@ -617,6 +647,17 @@ const view = new EditorView({
 
 view.focus();
 updateTitle();
+
+// The button often comes up outside the editor (or outside the window), so the
+// release is tracked here rather than through a CodeMirror handler. Blur is a
+// safety net: without it a drag that ends off-window would leave markers hidden.
+function endDrag() {
+  if (view.state.field(draggingField, false)) {
+    view.dispatch({ effects: setDragging.of(false) });
+  }
+}
+window.addEventListener("mouseup", endDrag);
+window.addEventListener("blur", endDrag);
 
 async function openPath(path) {
   if (!path) return;
