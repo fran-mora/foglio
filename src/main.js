@@ -2,7 +2,6 @@ import { EditorState, StateField, StateEffect } from "@codemirror/state";
 import {
   EditorView,
   keymap,
-  drawSelection,
   highlightActiveLine,
   Decoration,
   WidgetType,
@@ -585,7 +584,9 @@ const state = EditorState.create({
       if (u.docChanged) reportDirty();
     }),
     history(),
-    drawSelection(),
+    // No drawSelection(): it paints the selection in a layer behind the text,
+    // which the opaque background on code-block lines hides completely. The
+    // browser's own selection draws with the text, so it stays visible.
     highlightActiveLine(),
     EditorView.lineWrapping,
     markdown({

@@ -104,9 +104,9 @@ body {
 
 .cm-gutters { display: none !important; }
 
-.cm-selectionBackground,
-.cm-content ::selection {
-  background: var(--selection) !important;
+.cm-content ::selection,
+.cm-content::selection {
+  background: var(--selection);
 }
 
 /* heading sizes — applied via decorations targeting the whole line.
