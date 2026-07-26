@@ -81,6 +81,8 @@ Run with `MD_DEBUG=1` to write a log to `$TMPDIR/foglio-debug.log`.
 
 A personal project, shared as-is. Issues and pull requests are welcome, but no support or delivery date is promised.
 
+Written with [Claude Code](https://claude.com/claude-code).
+
 ## License
 
 [MIT](LICENSE)
