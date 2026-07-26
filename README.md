@@ -1,5 +1,7 @@
 # Foglio
 
+[![tests](https://github.com/fran-mora/foglio/actions/workflows/test.yml/badge.svg)](https://github.com/fran-mora/foglio/actions/workflows/test.yml)
+
 A markdown editor for macOS. Text renders as you type, in the pane you are editing, so there is no split view and no preview mode to switch into. *Foglio* is Italian for a sheet of paper.
 
 ![Typing markdown in Foglio: a heading, bold text, task list, table and Python block each render in place as they are written](docs/demo.gif)
@@ -51,6 +53,25 @@ Requires macOS 11 or later, on Apple Silicon or Intel. The window chrome and Fin
 ## Roadmap
 
 Left out of 0.1 on purpose: math typesetting, Mermaid diagrams, themes, plugins, auto-update, and Windows or Linux builds. Foglio is meant to stay small. Math and Mermaid are the likeliest things to add next.
+
+## Tests
+
+```sh
+npm test                                  # markdown helpers
+cargo test --manifest-path src-tauri/Cargo.toml   # rust helpers
+```
+
+The suite covers the parts where a wrong answer would be silent rather than
+obvious: the HTML escaping that stands between a document and script running in
+the editor, the link targets a document is allowed to point at, table and image
+parsing, how relative image paths resolve against the open file, and the
+sanitising of a document name before it is written into a temp path.
+
+What it deliberately does not cover is how any of it looks. The rendering is
+checked by running the app and reading the screen, because the bugs that have
+actually turned up here were visual — a marker reflowing the line under the
+cursor, a selection drawn behind an opaque background — and no assertion would
+have caught either.
 
 ## Debugging
 

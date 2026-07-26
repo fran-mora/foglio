@@ -22,6 +22,13 @@ import { languages } from "@codemirror/language-data";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Table, TaskList, Strikethrough, Autolink } from "@lezer/markdown";
 import { marked } from "marked";
+import {
+  escapeHtml,
+  renderInline,
+  parseTable,
+  parseImage,
+  resolveImagePath,
+} from "./markdown.js";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -46,22 +53,6 @@ console.log("hello");
 Open a \`.md\` file from Finder, or save changes with ⌘S.
 `;
 
-// Render inline markdown (bold/italic/strike/code/links) inside table cells.
-// HTML-escape first so cell content can't inject markup.
-function renderInline(text) {
-  const esc = text.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-  return esc
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/__([^_]+)__/g, "<strong>$1</strong>")
-    .replace(/~~([^~]+)~~/g, "<s>$1</s>")
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-    .replace(/(^|[^_])_([^_\n]+)_/g, "$1<em>$2</em>");
-}
-
 // Renders a markdown table block as a real HTML <table>.
 // Uses simple line-level parsing rather than walking lezer cell nodes —
 // tables in markdown are line-oriented and this keeps it readable.
@@ -76,43 +67,13 @@ class TableWidget extends WidgetType {
   toDOM() {
     const root = document.createElement("div");
     root.className = "md-table-rendered";
-    const lines = this.text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
 
-    const splitRow = (line) => {
-      let s = line;
-      if (s.startsWith("|")) s = s.slice(1);
-      if (s.endsWith("|")) s = s.slice(0, -1);
-      return s.split("|").map((c) => c.trim());
-    };
-
-    const isDelim = (line) => /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/.test(line);
-    const aligns = (line) =>
-      splitRow(line).map((cell) => {
-        const left = cell.startsWith(":");
-        const right = cell.endsWith(":");
-        if (left && right) return "center";
-        if (right) return "right";
-        return "left";
-      });
-
-    let header = null;
-    let alignment = [];
-    const body = [];
-    for (const line of lines) {
-      if (isDelim(line)) {
-        alignment = aligns(line);
-        continue;
-      }
-      if (header === null) header = splitRow(line);
-      else body.push(splitRow(line));
-    }
-    if (!header) {
+    const parsed = parseTable(this.text);
+    if (!parsed) {
       root.textContent = this.text;
       return root;
     }
+    const { header, aligns, rows } = parsed;
 
     const table = document.createElement("table");
     const thead = document.createElement("thead");
@@ -120,19 +81,19 @@ class TableWidget extends WidgetType {
     header.forEach((cell, i) => {
       const th = document.createElement("th");
       th.innerHTML = renderInline(cell);
-      if (alignment[i]) th.style.textAlign = alignment[i];
+      if (aligns[i]) th.style.textAlign = aligns[i];
       htr.appendChild(th);
     });
     thead.appendChild(htr);
     table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
-    body.forEach((row) => {
+    rows.forEach((row) => {
       const tr = document.createElement("tr");
       row.forEach((cell, i) => {
         const td = document.createElement("td");
         td.innerHTML = renderInline(cell);
-        if (alignment[i]) td.style.textAlign = alignment[i];
+        if (aligns[i]) td.style.textAlign = aligns[i];
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
@@ -186,22 +147,12 @@ class BulletWidget extends WidgetType {
 // Remote and data URLs pass through; local paths (absolute or relative to the
 // open document) go through Tauri's asset protocol.
 function resolveImageSrc(rawUrl) {
-  if (/^(https?:|data:)/i.test(rawUrl)) return rawUrl;
-  let p = rawUrl;
+  const { remote, src } = resolveImagePath(rawUrl, currentPath);
+  if (remote || !isTauri) return src;
   try {
-    p = decodeURI(p);
+    return convertFileSrc(src);
   } catch {
-    // Leave a malformed percent-escape alone rather than dropping the path.
-  }
-  if (!p.startsWith("/") && currentPath) {
-    const dir = currentPath.slice(0, currentPath.lastIndexOf("/"));
-    p = `${dir}/${p}`;
-  }
-  if (!isTauri) return p;
-  try {
-    return convertFileSrc(p);
-  } catch {
-    return p;
+    return src;
   }
 }
 
@@ -346,8 +297,8 @@ function buildDecorations(state) {
         const line = state.doc.lineAt(node.from);
         if (line.number === cursorLine) return false;
         const raw = state.doc.sliceString(node.from, node.to);
-        const m = /^!\[([^\]]*)\]\(\s*<?([^)>\s]+)>?(?:\s+"[^"]*")?\s*\)$/.exec(raw);
-        if (!m) return false;
+        const img = parseImage(raw);
+        if (!img) return false;
         // An image alone on its line gets full width; one sitting inside a
         // sentence is capped to line height so the text still reads.
         const before = line.text.slice(0, node.from - line.from);
@@ -355,7 +306,7 @@ function buildDecorations(state) {
         const standalone = (before + after).trim().length === 0;
         builder.push(
           Decoration.replace({
-            widget: new ImageWidget(m[1], m[2], standalone),
+            widget: new ImageWidget(img.alt, img.url, standalone),
           }).range(node.from, node.to)
         );
         return false;
@@ -787,12 +738,6 @@ async function jsLog(msg) {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("js_log", { msg });
   } catch {}
-}
-
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
 }
 
 // Three-way close prompt: "save" | "discard" | "review".

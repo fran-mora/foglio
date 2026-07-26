@@ -241,13 +241,30 @@ fn drop_watcher_if_unused(path: &str) {
 // Writes a rendered-HTML document to a temp file and opens it with the system
 // handler (default browser on macOS). WKWebView doesn't surface window.print()
 // to the user, so we hand off to the browser where ⌘P → Save as PDF works.
-#[tauri::command]
-fn export_html(html: String, name: String) -> Result<String, String> {
+// Reduces a document name to something safe to place in a temp path. Anything
+// that isn't alphanumeric, dash, underscore or dot becomes an underscore, so a
+// name can't walk out of the temp directory or invent a nested path.
+fn safe_export_name(name: &str) -> String {
     let safe: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    let safe = if safe.is_empty() { "untitled".to_string() } else { safe };
+    if safe.is_empty() || safe.chars().all(|c| c == '.') {
+        "untitled".to_string()
+    } else {
+        safe
+    }
+}
+
+#[tauri::command]
+fn export_html(html: String, name: String) -> Result<String, String> {
+    let safe = safe_export_name(&name);
     let mut path = std::env::temp_dir();
     path.push(format!("md-export-{}.html", safe));
     std::fs::write(&path, &html).map_err(|e| {
@@ -551,4 +568,45 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_export_name;
+
+    #[test]
+    fn keeps_ordinary_names_intact() {
+        assert_eq!(safe_export_name("field-notes"), "field-notes");
+        assert_eq!(safe_export_name("Report_v2.final"), "Report_v2.final");
+    }
+
+    #[test]
+    fn strips_path_separators() {
+        // A name is pasted into a temp path, so it must not be able to point
+        // anywhere else.
+        assert_eq!(safe_export_name("../../etc/passwd"), ".._.._etc_passwd");
+        assert_eq!(safe_export_name("/absolute/path"), "_absolute_path");
+        assert!(!safe_export_name("a/b").contains('/'));
+    }
+
+    #[test]
+    fn replaces_shell_and_space_characters() {
+        assert_eq!(safe_export_name("my notes"), "my_notes");
+        assert_eq!(safe_export_name("a;rm -rf b"), "a_rm_-rf_b");
+        assert_eq!(safe_export_name("$(whoami)"), "__whoami_");
+    }
+
+    #[test]
+    fn falls_back_when_nothing_usable_remains() {
+        assert_eq!(safe_export_name(""), "untitled");
+        assert_eq!(safe_export_name("///"), "___");
+        assert_eq!(safe_export_name("."), "untitled");
+        assert_eq!(safe_export_name(".."), "untitled");
+    }
+
+    #[test]
+    fn keeps_unicode_letters() {
+        assert_eq!(safe_export_name("relazione-tecnica"), "relazione-tecnica");
+        assert_eq!(safe_export_name("città"), "città");
+    }
 }
