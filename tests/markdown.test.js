@@ -7,7 +7,7 @@ import {
   parseTable,
   parseImage,
   resolveImagePath,
-} from "./markdown.js";
+} from "../src/markdown.js";
 
 describe("escapeHtml", () => {
   it("escapes the characters that could open a tag or attribute", () => {

@@ -17,9 +17,9 @@ Foglio is the small open-source version. The app is 5 MB, starts with a document
 - **Renders inline.** Headings, bold, italic, links, tables, task lists, quotes, images and fenced code all render in place. Put the cursor on a line and the raw markdown comes back so you can edit it.
 - **Highlights code** in fenced blocks, for the 143 languages CodeMirror ships grammars for.
 - **Toggles task lists on click.** The checkbox writes `[x]` back into the file.
-- **Shows images** from relative or absolute paths. An image sitting inside a sentence is scaled to the line so the text still reads.
+- **Shows images** from relative or absolute paths, scaling one that sits inside a sentence to the line height so the text still reads.
 - **Opens from Finder.** Double-click any `.md`, `.markdown` or `.mdx` file. Opening a file that is already open focuses its window rather than opening a second copy of it.
-- **Follows the file on disk.** Change the document in another tool and Foglio reloads it, asking first if you have unsaved edits. Atomic-rename saves, the kind Dropbox and many editors do, are handled.
+- **Follows the file on disk.** Change the document in another tool and Foglio reloads it, asking first if you have unsaved edits. It handles atomic-rename saves, the kind Dropbox and many editors do.
 - **Behaves like a Mac app.** Native menu bar, multiple windows, save prompts on close and on ⌘Q, find with ⌘F, zoom with ⌘+ and ⌘−.
 - **Exports to PDF** by rendering to HTML and handing off to your browser, where ⌘P saves a PDF.
 
@@ -52,26 +52,25 @@ Requires macOS 11 or later, on Apple Silicon or Intel. The window chrome and Fin
 
 ## Roadmap
 
-Left out of 0.1 on purpose: math typesetting, Mermaid diagrams, themes, plugins, auto-update, and Windows or Linux builds. Foglio is meant to stay small. Math and Mermaid are the likeliest things to add next.
+Left out on purpose so far: math typesetting, Mermaid diagrams, themes, plugins, auto-update, and Windows or Linux builds. Foglio is meant to stay small. Math and Mermaid are the likeliest things to add next.
 
 ## Tests
 
 ```sh
-npm test                                  # markdown helpers
-cargo test --manifest-path src-tauri/Cargo.toml   # rust helpers
+npm test                                          # tests/markdown.test.js
+cargo test --manifest-path src-tauri/Cargo.toml   # src-tauri/src/lib.rs
 ```
 
-The suite covers the parts where a wrong answer would be silent rather than
-obvious: the HTML escaping that stands between a document and script running in
-the editor, the link targets a document is allowed to point at, table and image
-parsing, how relative image paths resolve against the open file, and the
-sanitising of a document name before it is written into a temp path.
+They cover the code where a wrong answer would pass unnoticed. That means the
+HTML escaping standing between a document and script running in the editor,
+which link targets a document may point at, table and image parsing, how a
+relative image path resolves against the open file, and how a document name is
+sanitised before it goes into a temp path.
 
-What it deliberately does not cover is how any of it looks. The rendering is
-checked by running the app and reading the screen, because the bugs that have
-actually turned up here were visual — a marker reflowing the line under the
-cursor, a selection drawn behind an opaque background — and no assertion would
-have caught either.
+They do not check how any of it looks. Rendering is verified by running the app
+and reading the screen. Every bug found here so far has been a visual one, such
+as a marker reflowing the line under the cursor, or a selection drawn behind an
+opaque background, and no assertion would have caught either.
 
 ## Debugging
 

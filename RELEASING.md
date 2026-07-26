@@ -8,42 +8,64 @@ You need an Apple Developer membership and a "Developer ID Application" certific
 security find-identity -v -p codesigning
 ```
 
-Store notarization credentials once, as a keychain profile named `foglio`:
+Store notarization credentials once, as a keychain profile named `foglio`. Run this in a terminal rather than through a tool, because it prompts for the password and needs a real TTY to read it:
 
 ```sh
 xcrun notarytool store-credentials foglio \
   --apple-id "you@example.com" \
-  --team-id 8XX87M89M2 \
-  --password "app-specific-password"
+  --team-id 8XX87M89M2
 ```
 
-The password is an app-specific password generated at <https://account.apple.com/account/manage>, not your Apple ID password.
+The password it asks for is an app-specific password generated at <https://account.apple.com/account/manage>, not your Apple ID password. If it returns a 403 about a missing or expired agreement, sign in at <https://developer.apple.com/account> and accept the pending Apple Developer Program License Agreement first.
+
+Universal builds need both Mac architectures installed:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+```
+
+Homebrew's Rust only carries the host architecture, so if `cargo` comes from Homebrew the x86_64 half of the build fails with a missing standard library. Put rustup's toolchain first for release builds:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+```
 
 ## Cutting a release
 
-1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`.
-
-2. Build and sign a universal binary, so the dmg runs on both Apple Silicon and Intel:
+1. Run the tests.
 
    ```sh
+   npm test
+   cargo test --manifest-path src-tauri/Cargo.toml
+   ```
+
+2. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`. All three must match.
+
+3. Build and sign a universal binary, so one dmg runs on both Apple Silicon and Intel.
+
+   ```sh
+   export PATH="$HOME/.cargo/bin:$PATH"
    export APPLE_SIGNING_IDENTITY="Developer ID Application: Francesco Moramarco (8XX87M89M2)"
    npm run tauri build -- --target universal-apple-darwin
    ```
 
-   This needs both architectures installed: `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
    Bundles land under `src-tauri/target/universal-apple-darwin/release/bundle/`.
 
-3. Notarize and staple the ticket onto the dmg:
+4. Notarize, then staple the ticket onto both the dmg and the app. Stapling the app as well means a first launch works offline.
 
    ```sh
-   DMG=src-tauri/target/release/bundle/dmg/Foglio_0.1.0_aarch64.dmg
+   VERSION=0.1.1
+   BUNDLE=src-tauri/target/universal-apple-darwin/release/bundle
+   DMG="$BUNDLE/dmg/Foglio_${VERSION}_universal.dmg"
+
    xcrun notarytool submit "$DMG" --keychain-profile foglio --wait
    xcrun stapler staple "$DMG"
+   xcrun stapler staple "$BUNDLE/macos/Foglio.app"
    ```
 
-   The submit step usually takes a few minutes. If it fails, `xcrun notarytool log <submission-id> --keychain-profile foglio` explains why.
+   Submission usually takes a few minutes. If it is rejected, `xcrun notarytool log <submission-id> --keychain-profile foglio` says why.
 
-4. Check Gatekeeper accepts it:
+5. Check Gatekeeper accepts it.
 
    ```sh
    spctl -a -t open --context context:primary-signature -vv "$DMG"
@@ -51,10 +73,19 @@ The password is an app-specific password generated at <https://account.apple.com
 
    Expect `accepted` and `source=Notarized Developer ID`. Before notarizing, the same command reports `rejected` with `source=Unnotarized Developer ID`.
 
-5. Create the GitHub release and attach the stapled dmg.
+6. Publish, and confirm the download works the way a stranger gets it.
+
+   ```sh
+   gh release create "v$VERSION" "$DMG#Foglio $VERSION (universal — Apple Silicon and Intel)" \
+     --title "Foglio $VERSION" --notes-file notes.md --latest
+
+   # download it back, mark it as quarantined the way a browser would, and re-check
+   gh release download "v$VERSION" --pattern "*.dmg" --dir /tmp/foglio-check
+   xattr -w com.apple.quarantine "0081;00000000;Safari;" /tmp/foglio-check/*.dmg
+   spctl -a -t open --context context:primary-signature -vv /tmp/foglio-check/*.dmg
+   ```
 
 ## Notes
 
 - A build without `APPLE_SIGNING_IDENTITY` set is unsigned, which is what contributors get. Only release builds need the certificate.
-- The default build produces an Apple Silicon dmg. Add `--target universal-apple-darwin` for a universal binary that also runs on Intel Macs.
-- Once the first notarized dmg is published, add a line to the README install section saying downloads are signed and notarized.
+- `lipo -archs <app>/Contents/MacOS/foglio` confirms a universal build really carries both architectures. It should print `x86_64 arm64`.
