@@ -23,7 +23,9 @@ Foglio is the small open-source version. The app is 5 MB, starts with a document
 
 ## Install
 
-Download the dmg from [Releases](../../releases), or build it yourself:
+Download the dmg from [Releases](../../releases). It is signed and notarized by Apple, so it opens without a Gatekeeper warning.
+
+Or build it yourself:
 
 ```sh
 npm install
