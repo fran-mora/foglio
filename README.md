@@ -2,7 +2,7 @@
 
 A markdown editor for macOS. Text renders as you type, in the pane you are editing, so there is no split view and no preview mode to switch into. *Foglio* is Italian for a sheet of paper.
 
-![Foglio showing a markdown document with a task list, a table and a syntax-highlighted Python block](docs/screenshot.png)
+![Typing markdown in Foglio: a heading, bold text, task list, table and Python block each render in place as they are written](docs/demo.gif)
 
 ## Why
 
