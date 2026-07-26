@@ -23,12 +23,15 @@ The password is an app-specific password generated at <https://account.apple.com
 
 1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`.
 
-2. Build and sign:
+2. Build and sign a universal binary, so the dmg runs on both Apple Silicon and Intel:
 
    ```sh
    export APPLE_SIGNING_IDENTITY="Developer ID Application: Francesco Moramarco (8XX87M89M2)"
-   npm run tauri build
+   npm run tauri build -- --target universal-apple-darwin
    ```
+
+   This needs both architectures installed: `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
+   Bundles land under `src-tauri/target/universal-apple-darwin/release/bundle/`.
 
 3. Notarize and staple the ticket onto the dmg:
 

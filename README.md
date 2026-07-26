@@ -34,7 +34,7 @@ npm run tauri build
 
 That needs Node.js and a Rust toolchain ([rustup](https://rustup.rs)). Use `npm run tauri dev` while working on it.
 
-Requires macOS 11 or later. The window chrome and Finder integration use macOS APIs, so there is no Windows or Linux build.
+Requires macOS 11 or later, on Apple Silicon or Intel. The window chrome and Finder integration use macOS APIs, so there is no Windows or Linux build.
 
 ## Keys
 
