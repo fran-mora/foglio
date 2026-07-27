@@ -520,6 +520,26 @@ function zoomReset() {
 
 applyFontSize();
 
+// Brief confirmation in the corner. Saving is otherwise silent, which leaves
+// you unsure whether ⌘S did anything.
+const TOAST_MS = 1500;
+let toastTimer = null;
+
+function showToast(message) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.classList.add("visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("visible"), TOAST_MS);
+}
+
 function updateTitle() {
   const t = (lastReportedDirty ? "• " : "") + fileName();
   document.title = t;
@@ -687,11 +707,20 @@ async function saveCurrent() {
     if (!path) return false;
     currentPath = path;
   }
-  await writeFile(path, applyEol(text));
+  try {
+    await writeFile(path, applyEol(text));
+  } catch (e) {
+    // A failed write used to fail silently, which is the worst outcome: you
+    // carry on believing the file is on disk.
+    jsLog(`save failed: ${e}`);
+    showToast("⚠️ Couldn’t save");
+    return false;
+  }
   fileRemoved = false;
   lastDiskContent = text;
   reportDirty();
   updateTitle();
+  showToast("✅ Saved");
   if (isTauri && isNew) {
     rpc("register_path", { path }).catch(() => {});
     rpc("watch_file", { path }).catch((e) => jsLog(`watch_file failed: ${e}`));
@@ -706,12 +735,19 @@ async function saveAs() {
   if (!path) return false;
   const text = view.state.doc.toString();
   const oldPath = currentPath;
-  await writeFile(path, applyEol(text));
+  try {
+    await writeFile(path, applyEol(text));
+  } catch (e) {
+    jsLog(`save as failed: ${e}`);
+    showToast("⚠️ Couldn’t save");
+    return false;
+  }
   currentPath = path;
   fileRemoved = false;
   lastDiskContent = text;
   reportDirty();
   updateTitle();
+  showToast("✅ Saved");
   if (isTauri) {
     rpc("register_path", { path }).catch(() => {});
     if (oldPath && oldPath !== path) {

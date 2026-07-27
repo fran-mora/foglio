@@ -334,6 +334,41 @@ body {
   .cm-selectionMatch { background: rgba(106, 168, 255, 0.15) !important; }
 }
 
+/* transient confirmation, top right under the title bar */
+#toast {
+  position: fixed;
+  top: 38px;
+  right: 16px;
+  z-index: 200;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 11px;
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+  user-select: none;
+}
+#toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  #toast {
+    transition: opacity 160ms ease;
+    transform: none;
+  }
+  #toast.visible {
+    transform: none;
+  }
+}
+
 /* inline images */
 .md-image img {
   max-width: 100%;
