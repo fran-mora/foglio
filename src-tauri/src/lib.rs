@@ -487,7 +487,6 @@ fn deliver(app: &AppHandle, path: PathBuf) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .menu(build_menu)
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
