@@ -1,4 +1,4 @@
-# Foglio
+# Foglio 
 
 [![tests](https://github.com/fran-mora/foglio/actions/workflows/test.yml/badge.svg)](https://github.com/fran-mora/foglio/actions/workflows/test.yml)
 
