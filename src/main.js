@@ -528,9 +528,7 @@ function reportDirty() {
   rpc("set_dirty", { dirty: d }).catch(() => {});
 }
 
-const state = EditorState.create({
-  doc: isTauri ? "" : initialDoc,
-  extensions: [
+const baseExtensions = [
     EditorView.updateListener.of((u) => {
       if (u.docChanged) reportDirty();
     }),
@@ -589,13 +587,24 @@ const state = EditorState.create({
       { key: "Mod--", run: () => (zoomBy(-1), true) },
       { key: "Mod-0", run: () => (zoomReset(), true) },
     ]),
-  ],
-});
+];
 
 const view = new EditorView({
-  state,
+  state: EditorState.create({
+    doc: isTauri ? "" : initialDoc,
+    extensions: baseExtensions,
+  }),
   parent: document.getElementById("editor"),
 });
+
+// Replaces the whole document with a fresh state, which discards undo history.
+// Loading a file as an ordinary edit would leave the previous document sitting
+// in history: undo after opening would restore the old text while the window
+// still pointed at the new path, and the next save would write it over the
+// newly opened file.
+function loadDocument(text) {
+  view.setState(EditorState.create({ doc: text, extensions: baseExtensions }));
+}
 
 view.focus();
 updateTitle();
@@ -617,9 +626,7 @@ async function openPath(path) {
   const oldPath = currentPath;
   currentPath = path;
   lastDiskContent = text;
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
-  });
+  loadDocument(text);
   reportDirty();
   updateTitle();
   if (isTauri) {
@@ -709,9 +716,7 @@ async function handleExternalChange(path) {
   // No local edits since last sync — reload silently.
   if (editorContent === lastDiskContent) {
     lastDiskContent = newContent;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: newContent },
-    });
+    loadDocument(newContent);
     return;
   }
   // Conflict: ask.
@@ -722,9 +727,7 @@ async function handleExternalChange(path) {
   );
   if (reload) {
     lastDiskContent = newContent;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: newContent },
-    });
+    loadDocument(newContent);
     reportDirty();
   }
   // If the user keeps theirs, lastDiskContent stays pointing at the old
@@ -1019,7 +1022,7 @@ if (isTauri) {
       } else if (winLabel === "main" && !currentPath && view.state.doc.length === 0) {
         // First-ever window with nothing to show: welcome content.
         baseContent = initialDoc;
-        view.dispatch({ changes: { from: 0, insert: initialDoc } });
+        loadDocument(initialDoc);
         reportDirty();
       }
     } catch (e) {
