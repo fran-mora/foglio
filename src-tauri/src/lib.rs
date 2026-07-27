@@ -130,12 +130,41 @@ fn read_text_file(path: String) -> Result<String, String> {
     })
 }
 
+// Writes through a temporary file in the same directory and renames it into
+// place. A plain write truncates first, so a full disk or a crash midway would
+// leave the previous contents destroyed and the new ones incomplete. The
+// watcher survives this because it watches the parent directory by name rather
+// than holding the file itself.
 #[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| {
-        let msg = format!("write_text_file({}) failed: {}", path, e);
+    let target = PathBuf::from(&path);
+    let dir = target
+        .parent()
+        .ok_or_else(|| "path has no parent directory".to_string())?;
+    let name = target
+        .file_name()
+        .ok_or_else(|| "path has no file name".to_string())?
+        .to_string_lossy()
+        .to_string();
+
+    let fail = |e: std::io::Error, stage: &str| {
+        let msg = format!("write_text_file({}) failed at {}: {}", path, stage, e);
         log(&msg);
         msg
+    };
+
+    let tmp = dir.join(format!(".{}.foglio-tmp", name));
+    std::fs::write(&tmp, content).map_err(|e| fail(e, "write"))?;
+
+    // Keep whatever permissions the file already had; a fresh temp file would
+    // otherwise hand it the default mode.
+    if let Ok(meta) = std::fs::metadata(&target) {
+        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    }
+
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        fail(e, "rename")
     })
 }
 
@@ -571,7 +600,52 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_export_name;
+    use super::{safe_export_name, write_text_file};
+
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("foglio-test-{}-{}.md", std::process::id(), tag))
+    }
+
+    #[test]
+    fn writes_a_new_file() {
+        let p = temp_path("new");
+        let _ = std::fs::remove_file(&p);
+        write_text_file(p.to_string_lossy().to_string(), "hello".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "hello");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn replaces_existing_content_and_leaves_no_temp_file() {
+        let p = temp_path("replace");
+        std::fs::write(&p, "old contents that are longer").unwrap();
+        write_text_file(p.to_string_lossy().to_string(), "new".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "new");
+
+        // The write goes via a dotfile in the same directory; it must be gone.
+        let dir = p.parent().unwrap();
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        let tmp = dir.join(format!(".{}.foglio-tmp", name));
+        assert!(!tmp.exists(), "temp file left behind at {:?}", tmp);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn keeps_the_original_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = temp_path("perms");
+        std::fs::write(&p, "x").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_text_file(p.to_string_lossy().to_string(), "y".into()).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "permissions were not carried over");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn reports_an_error_rather_than_panicking_on_a_bad_path() {
+        assert!(write_text_file("/".into(), "x".into()).is_err());
+    }
 
     #[test]
     fn keeps_ordinary_names_intact() {

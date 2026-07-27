@@ -409,6 +409,23 @@ const livePreview = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+// CodeMirror normalises every line ending to \n, so a CRLF file would look
+// edited the moment it opened and would be rewritten with LF endings on the
+// first save. The file's own ending is remembered and put back when writing.
+let lineEnding = "\n";
+
+function normalizeEol(text) {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+function applyEol(text) {
+  return lineEnding === "\n" ? text : text.replace(/\n/g, lineEnding);
+}
+
+// Set when the open file disappears from disk. The window then holds the only
+// copy, so it counts as unsaved however little was typed.
+let fileRemoved = false;
+
 // File I/O — Tauri APIs at runtime; no-op fallbacks during plain-vite dev.
 let currentPath = null;
 // Last content we know is on disk for the open file. Updated after read and
@@ -514,6 +531,7 @@ function updateTitle() {
 }
 
 function isDirty() {
+  if (fileRemoved) return true;
   const doc = view.state.doc.toString();
   return currentPath ? doc !== lastDiskContent : doc !== baseContent;
 }
@@ -622,9 +640,12 @@ window.addEventListener("blur", endDrag);
 
 async function openPath(path) {
   if (!path) return;
-  const text = await readFile(path);
+  const raw = await readFile(path);
+  lineEnding = /\r\n/.test(raw) ? "\r\n" : "\n";
+  const text = normalizeEol(raw);
   const oldPath = currentPath;
   currentPath = path;
+  fileRemoved = false;
   lastDiskContent = text;
   loadDocument(text);
   reportDirty();
@@ -654,7 +675,9 @@ async function openDialog() {
   }
 }
 
-// Returns true if the document ended up on disk (false = user cancelled).
+// Returns true only if the document on disk now matches the editor. Typing
+// during the write, or cancelling the save dialog, both make that false, and
+// the close handler relies on it to keep the window open.
 async function saveCurrent() {
   const text = view.state.doc.toString();
   let path = currentPath;
@@ -664,7 +687,8 @@ async function saveCurrent() {
     if (!path) return false;
     currentPath = path;
   }
-  await writeFile(path, text);
+  await writeFile(path, applyEol(text));
+  fileRemoved = false;
   lastDiskContent = text;
   reportDirty();
   updateTitle();
@@ -672,7 +696,7 @@ async function saveCurrent() {
     rpc("register_path", { path }).catch(() => {});
     rpc("watch_file", { path }).catch((e) => jsLog(`watch_file failed: ${e}`));
   }
-  return true;
+  return !isDirty();
 }
 
 // Save under a new name. The old file stays on disk; this window follows the
@@ -682,8 +706,9 @@ async function saveAs() {
   if (!path) return false;
   const text = view.state.doc.toString();
   const oldPath = currentPath;
-  await writeFile(path, text);
+  await writeFile(path, applyEol(text));
   currentPath = path;
+  fileRemoved = false;
   lastDiskContent = text;
   reportDirty();
   updateTitle();
@@ -702,7 +727,7 @@ async function handleExternalChange(path) {
   if (path !== currentPath) return;
   let newContent;
   try {
-    newContent = await readFile(path);
+    newContent = normalizeEol(await readFile(path));
   } catch (e) {
     jsLog(`re-read after change failed: ${e}`);
     return;
@@ -711,8 +736,12 @@ async function handleExternalChange(path) {
   // Our own save: editor and disk match. Just sync the marker.
   if (newContent === editorContent) {
     lastDiskContent = newContent;
+    reportDirty();
     return;
   }
+  // Disk holds what we already knew was there, and the editor has moved on
+  // since. That is our own save landing late, not somebody else's change.
+  if (newContent === lastDiskContent) return;
   // No local edits since last sync — reload silently.
   if (editorContent === lastDiskContent) {
     lastDiskContent = newContent;
@@ -866,8 +895,19 @@ async function exportPdf() {
     }
   `;
 
+  // marked passes raw HTML in the document straight through, so an exported
+  // file can contain whatever <script> the markdown held. This lands in the
+  // default browser, where it would run with access to the rendered document.
+  // The policy allows the styles and images a printable page needs and
+  // nothing that executes.
+  const exportCsp =
+    "default-src 'none'; img-src 'self' data: file: https: http:; " +
+    "style-src 'unsafe-inline'; font-src data:";
+
   const docHtml = `<!doctype html>
-<html><head><meta charset="utf-8"><title>${escapeHtml(baseName)}</title>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${exportCsp}">
+<title>${escapeHtml(baseName)}</title>
 <style>${printStyles}${screenStyles}</style>
 </head><body>
 <div class="print-hint">Press ⌘P → Save as PDF</div>
@@ -956,6 +996,14 @@ if (isTauri) {
     });
     await win.listen("file-changed", (e) => {
       handleExternalChange(e.payload);
+    });
+    // The file went away underneath us. This window now holds the only copy,
+    // so mark it unsaved: closing must prompt rather than discard it silently.
+    await win.listen("file-removed", (e) => {
+      if (e.payload !== currentPath) return;
+      jsLog(`file removed on disk: ${e.payload}`);
+      fileRemoved = true;
+      reportDirty();
     });
     // Native menu commands arrive as events aimed at the focused window.
     await win.listen("menu", (e) => {
