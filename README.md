@@ -10,7 +10,9 @@ A markdown editor for macOS. Text renders as you type, in the pane you are editi
 
 Typora set the pattern for this kind of editing and is closed source. Mark Text, the open-source answer, is Electron and sat unmaintained from 2022 until this year. MarkEdit is native and quick but shows plain source with no rendering.
 
-Foglio is the small open-source version. The app is 5 MB, starts with a document on screen in under half a second, and never rewrites your markdown into something else.
+Foglio is the small open-source version. The app is 6.6 MB, starts with a document on screen in about a quarter of a second, and never rewrites your markdown into something else.
+
+That last part is the real difference. Editors built on ProseMirror or TipTap parse your file into a document model and generate markdown back out of it, which is where list markers, emphasis characters and blank lines quietly change. Foglio decorates the source text instead, so what it writes is what you wrote. Press ⇧⌘D before saving and you can watch the diff to see for yourself.
 
 ## What it does
 
@@ -22,6 +24,11 @@ Foglio is the small open-source version. The app is 5 MB, starts with a document
 - **Follows the file on disk.** Change the document in another tool and Foglio reloads it, asking first if you have unsaved edits. It handles atomic-rename saves, the kind Dropbox and many editors do.
 - **Behaves like a Mac app.** Native menu bar, multiple windows, save prompts on close and on ⌘Q, find with ⌘F, zoom with ⌘+ and ⌘−.
 - **Exports to PDF** by rendering to HTML and handing off to your browser, where ⌘P saves a PDF.
+- **Renders math** with KaTeX, `$inline$` and `$$display$$`. A price like $5 stays a price.
+- **Draws Mermaid diagrams** from ```` ```mermaid ```` fences. The library loads only when a document contains one.
+- **Folds YAML frontmatter** into a key/value summary, and gives back the raw YAML when you put the cursor in it.
+- **Shows what would change on disk** with ⇧⌘D, before you save.
+- **Reads .editorconfig** for line endings, final newline and trailing whitespace. Trailing whitespace is left alone when the document uses two-space hard line breaks.
 
 ## Install
 
@@ -48,24 +55,27 @@ Requires macOS 11 or later, on Apple Silicon or Intel. The window chrome and Fin
 | ⌘N | New window |
 | ⌘P | Export as PDF |
 | ⌘F | Find |
+| ⇧⌘D | Show what would change on disk |
 | ⌘+ ⌘− ⌘0 | Zoom in, out, reset |
 
 ## Roadmap
 
-Left out on purpose so far: math typesetting, Mermaid diagrams, themes, plugins, auto-update, and Windows or Linux builds. Foglio is meant to stay small. Math and Mermaid are the likeliest things to add next.
+Left out on purpose: themes, plugins, auto-update, and Windows or Linux builds. Foglio is meant to stay small.
 
 ## Tests
 
 ```sh
-npm test                                          # tests/markdown.test.js
+npm test                                          # tests/
 cargo test --manifest-path src-tauri/Cargo.toml   # src-tauri/src/lib.rs
 ```
 
 They cover the code where a wrong answer would pass unnoticed. That means the
 HTML escaping standing between a document and script running in the editor,
-which link targets a document may point at, table and image parsing, how a
-relative image path resolves against the open file, and how a document name is
-sanitised before it goes into a temp path.
+which link targets a document may point at, table, image, frontmatter and math
+parsing, how a relative image path resolves against the open file, that loading
+a document leaves nothing in undo history, that line endings survive a
+round trip, and how a document name is sanitised before it goes into a temp
+path.
 
 They do not check how any of it looks. Rendering is verified by running the app
 and reading the screen. Every bug found here so far has been a visual one, such
