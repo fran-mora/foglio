@@ -10,7 +10,7 @@ A markdown editor for macOS. Text renders as you type, in the pane you are editi
 
 Typora set the pattern for this kind of editing and is closed source. Mark Text, the open-source answer, is Electron and sat unmaintained from 2022 until this year. MarkEdit is native and quick but shows plain source with no rendering.
 
-Foglio is the small open-source version. The app is 6.6 MB, starts with a document on screen in about a quarter of a second, and never rewrites your markdown into something else.
+Foglio is the small open-source version. The download is 7.7 MB, it starts with a document on screen in about a quarter of a second, and it never rewrites your markdown into something else. The installed app is 13 MB because it is a universal binary carrying both Intel and Apple Silicon builds.
 
 That last part is the real difference. Editors built on ProseMirror or TipTap parse your file into a document model and generate markdown back out of it, which is where list markers, emphasis characters and blank lines quietly change. Foglio decorates the source text instead, so what it writes is what you wrote. Press ⇧⌘D before saving and you can watch the diff to see for yourself.
 
