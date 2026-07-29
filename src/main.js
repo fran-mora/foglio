@@ -28,7 +28,18 @@ import {
   parseTable,
   parseImage,
   resolveImagePath,
+  parseFrontmatter,
+  findInlineMath,
+  findDisplayMath,
 } from "./markdown.js";
+import katex from "katex";
+import "katex/dist/katex.min.css";
+import {
+  resolveConfig,
+  applyEditorConfig,
+  wouldBreakHardLineBreaks,
+} from "./editorconfig.js";
+import { changedHunks, diffStats, isWhitespaceOnlyChange } from "./diff.js";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -200,6 +211,128 @@ const dragTracker = EditorView.domEventHandlers({
   },
 });
 
+// Frontmatter drawn as a compact key/value list. The block is replaced
+// visually only; the bytes underneath are untouched, and putting the cursor
+// inside brings the YAML back like any other construct.
+class FrontmatterWidget extends WidgetType {
+  constructor(entries) {
+    super();
+    this.entries = entries;
+  }
+  eq(other) {
+    return JSON.stringify(other.entries) === JSON.stringify(this.entries);
+  }
+  toDOM() {
+    const root = document.createElement("div");
+    root.className = "md-frontmatter";
+    if (!this.entries.length) {
+      root.textContent = "frontmatter";
+      return root;
+    }
+    for (const { key, value } of this.entries) {
+      const row = document.createElement("div");
+      row.className = "md-fm-row";
+      const k = document.createElement("span");
+      k.className = "md-fm-key";
+      k.textContent = key;
+      const v = document.createElement("span");
+      v.className = "md-fm-value";
+      v.textContent = value;
+      row.append(k, v);
+      root.appendChild(row);
+    }
+    return root;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+// TeX rendered by KaTeX. Invalid maths shows the source in red rather than
+// throwing, so a typo mid-formula doesn't blank the line you're typing on.
+class MathWidget extends WidgetType {
+  constructor(tex, display) {
+    super();
+    this.tex = tex;
+    this.display = display;
+  }
+  eq(other) {
+    return other.tex === this.tex && other.display === this.display;
+  }
+  toDOM() {
+    const el = document.createElement(this.display ? "div" : "span");
+    el.className = this.display ? "md-math md-math-display" : "md-math";
+    try {
+      katex.render(this.tex, el, {
+        displayMode: this.display,
+        throwOnError: false,
+        output: "html",
+      });
+    } catch (e) {
+      el.className += " md-math-error";
+      el.textContent = this.display ? `$$${this.tex}$$` : `$${this.tex}$`;
+    }
+    return el;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+// Mermaid is several megabytes, so it is fetched the first time a diagram
+// actually appears rather than at startup. Everything below renders
+// asynchronously off that promise.
+let mermaidPromise = null;
+let mermaidSeq = 0;
+
+function loadMermaid() {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then(({ default: mermaid }) => {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict", // no click handlers or inline scripts from a document
+        theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif",
+      });
+      return mermaid;
+    });
+  }
+  return mermaidPromise;
+}
+
+class MermaidWidget extends WidgetType {
+  constructor(code) {
+    super();
+    this.code = code;
+  }
+  eq(other) {
+    return other.code === this.code;
+  }
+  toDOM() {
+    const root = document.createElement("div");
+    root.className = "md-mermaid";
+    root.textContent = "rendering diagram…";
+
+    loadMermaid()
+      .then(async (mermaid) => {
+        const id = `foglio-mermaid-${++mermaidSeq}`;
+        const { svg } = await mermaid.render(id, this.code);
+        root.innerHTML = svg;
+        root.classList.add("md-mermaid-ready");
+      })
+      .catch((e) => {
+        // A malformed diagram shows its source rather than an empty box.
+        root.className = "md-mermaid md-mermaid-error";
+        root.textContent = String(e?.message || e).split("\n")[0];
+      });
+
+    return root;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
 const taskClickHandler = EditorView.domEventHandlers({
   mousedown(e, view) {
     const t = e.target;
@@ -254,6 +387,64 @@ function buildDecorations(state) {
     }
   };
 
+  // Frontmatter sits above the markdown grammar, so it is handled before the
+  // tree walk rather than as a node. Only collapsed when the cursor is outside
+  // the block, matching how every other construct behaves.
+  const fm = parseFrontmatter(state.doc.sliceString(0, Math.min(4000, state.doc.length)));
+  if (fm) {
+    const startLine = state.doc.lineAt(fm.from).number;
+    const endLine = state.doc.lineAt(fm.to).number;
+    const cursorInside = reveal && cursorLine >= startLine && cursorLine <= endLine;
+    if (cursorInside) {
+      tagLines(fm.from, fm.to, "md-frontmatter-raw");
+    } else {
+      builder.push(
+        Decoration.replace({
+          widget: new FrontmatterWidget(fm.entries),
+          block: true,
+        }).range(fm.from, fm.to)
+      );
+    }
+  }
+
+  // Math is not part of the markdown grammar either, so it is matched over the
+  // text. Display blocks first, then inline spans outside them and outside code.
+  const docText = state.doc.toString();
+  const mathRanges = [];
+
+  for (const block of findDisplayMath(docText)) {
+    const startLine = state.doc.lineAt(block.from).number;
+    const endLine = state.doc.lineAt(block.to).number;
+    if (reveal && cursorLine >= startLine && cursorLine <= endLine) continue;
+    mathRanges.push([block.from, block.to]);
+    builder.push(
+      Decoration.replace({
+        widget: new MathWidget(block.tex, true),
+        block: true,
+      }).range(block.from, block.to)
+    );
+  }
+
+  for (let n = 1; n <= state.doc.lines; n++) {
+    const line = state.doc.line(n);
+    if (reveal && n === cursorLine) continue;
+    if (mathRanges.some(([f, t]) => line.from >= f && line.to <= t)) continue;
+    for (const span of findInlineMath(line.text)) {
+      const from = line.from + span.from;
+      const to = line.from + span.to;
+      // Skip anything already inside a code span or fence.
+      const node = syntaxTree(state).resolveInner(from, 1);
+      let inCode = false;
+      for (let p = node; p; p = p.parent) {
+        if (/Code|FencedCode/.test(p.name)) { inCode = true; break; }
+      }
+      if (inCode) continue;
+      builder.push(
+        Decoration.replace({ widget: new MathWidget(span.tex, false) }).range(from, to)
+      );
+    }
+  }
+
   syntaxTree(state).iterate({
     enter: (node) => {
       const name = node.name;
@@ -267,6 +458,27 @@ function buildDecorations(state) {
       } else if (name === "Blockquote") {
         tagLines(node.from, node.to, "md-quote");
       } else if (name === "FencedCode" || name === "CodeBlock") {
+        // A ```mermaid fence becomes the diagram it describes, unless the
+        // cursor is inside it, in which case it stays editable source.
+        const startLine = state.doc.lineAt(node.from);
+        const endLine = state.doc.lineAt(node.to);
+        const info = /^\s*(?:```|~~~)\s*mermaid\s*$/i.test(startLine.text);
+        const cursorInside =
+          reveal && cursorLine >= startLine.number && cursorLine <= endLine.number;
+        if (info && !cursorInside && endLine.number > startLine.number) {
+          const code = state.doc
+            .sliceString(startLine.to + 1, endLine.from)
+            .replace(/\n?(?:```|~~~)\s*$/, "");
+          if (code.trim()) {
+            builder.push(
+              Decoration.replace({
+                widget: new MermaidWidget(code),
+                block: true,
+              }).range(startLine.from, endLine.to)
+            );
+            return false;
+          }
+        }
         tagLines(node.from, node.to, "md-code");
       } else if (name === "HorizontalRule") {
         const line = state.doc.lineAt(node.from);
@@ -426,6 +638,39 @@ function applyEol(text) {
 // copy, so it counts as unsaved however little was typed.
 let fileRemoved = false;
 
+// Settings from any .editorconfig governing the open file, loaded on open.
+let editorConfig = {};
+
+async function loadEditorConfig(path) {
+  editorConfig = {};
+  if (!isTauri || !path) return;
+  try {
+    const files = await rpc("read_editorconfig", { path });
+    if (!Array.isArray(files)) return;
+    // Outermost first, so nearer files overwrite what they inherit.
+    for (const text of files) Object.assign(editorConfig, resolveConfig(text, path));
+    if (Object.keys(editorConfig).length) {
+      jsLog(`editorconfig: ${JSON.stringify(editorConfig)}`);
+    }
+  } catch (e) {
+    jsLog(`read_editorconfig failed: ${e}`);
+  }
+}
+
+// What actually goes to disk. The document's own line ending is the fallback,
+// so a file with no .editorconfig is written back exactly as it came in.
+function contentForDisk(text) {
+  const config = { ...editorConfig };
+  // Two trailing spaces are a hard line break in markdown. Trimming them would
+  // silently change the rendered document, so that setting is ignored when the
+  // file relies on them.
+  if (config.trim_trailing_whitespace === "true" && wouldBreakHardLineBreaks(text)) {
+    jsLog("editorconfig: skipping trim_trailing_whitespace, document uses hard line breaks");
+    delete config.trim_trailing_whitespace;
+  }
+  return applyEditorConfig(text, config, lineEnding);
+}
+
 // File I/O — Tauri APIs at runtime; no-op fallbacks during plain-vite dev.
 let currentPath = null;
 // Last content we know is on disk for the open file. Updated after read and
@@ -540,6 +785,71 @@ function showToast(message) {
   toastTimer = setTimeout(() => el.classList.remove("visible"), TOAST_MS);
 }
 
+// Shows exactly which lines would change on disk if you saved now. The point
+// is that for an untouched file this panel is empty: Foglio adds nothing of
+// its own, which is easier to believe when you can look at it.
+function showSaveDiff() {
+  document.getElementById("diff-panel")?.remove();
+
+  const outgoing = contentForDisk(view.state.doc.toString());
+  const onDisk = currentPath ? applyEol(lastDiskContent) : "";
+  const stats = diffStats(onDisk, outgoing);
+
+  const panel = document.createElement("div");
+  panel.id = "diff-panel";
+
+  const head = document.createElement("div");
+  head.className = "diff-head";
+  const title = document.createElement("span");
+  if (!currentPath) {
+    title.textContent = "Unsaved document — nothing on disk to compare";
+  } else if (stats.truncated) {
+    title.textContent = "File too large to diff";
+  } else if (!stats.added && !stats.removed) {
+    title.textContent = "No changes — the file on disk is already identical";
+  } else {
+    title.textContent = `${stats.added} added, ${stats.removed} removed`;
+    if (isWhitespaceOnlyChange(onDisk, outgoing)) {
+      title.textContent += " (whitespace only)";
+    }
+  }
+  const close = document.createElement("button");
+  close.className = "diff-close";
+  close.textContent = "Close";
+  close.addEventListener("click", () => {
+    panel.remove();
+    view.focus();
+  });
+  head.append(title, close);
+  panel.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "diff-body";
+  for (const row of changedHunks(onDisk, outgoing, 2)) {
+    const line = document.createElement("div");
+    line.className = `diff-row diff-${row.type}`;
+    const gutter = document.createElement("span");
+    gutter.className = "diff-gutter";
+    gutter.textContent = row.type === "add" ? "+" : row.type === "remove" ? "−" : " ";
+    const content = document.createElement("span");
+    content.className = "diff-text";
+    // Whitespace is the whole point here, so make trailing spaces visible.
+    content.textContent = row.text.replace(/[ ]+$/, (m) => "·".repeat(m.length));
+    line.append(gutter, content);
+    body.appendChild(line);
+  }
+  panel.appendChild(body);
+
+  panel.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      panel.remove();
+      view.focus();
+    }
+  });
+  document.body.appendChild(panel);
+  close.focus();
+}
+
 function updateTitle() {
   const t = (lastReportedDirty ? "• " : "") + fileName();
   document.title = t;
@@ -624,6 +934,7 @@ const baseExtensions = [
       { key: "Mod-Shift-=", run: () => (zoomBy(1), true) },
       { key: "Mod--", run: () => (zoomBy(-1), true) },
       { key: "Mod-0", run: () => (zoomReset(), true) },
+      { key: "Mod-Shift-d", run: () => (showSaveDiff(), true) },
     ]),
 ];
 
@@ -641,7 +952,14 @@ const view = new EditorView({
 // still pointed at the new path, and the next save would write it over the
 // newly opened file.
 function loadDocument(text) {
-  view.setState(EditorState.create({ doc: text, extensions: baseExtensions }));
+  // Land in the body rather than at offset 0. Opening at the very start would
+  // put the caret inside any frontmatter block, which then shows as raw YAML
+  // every time a file is opened.
+  const fm = parseFrontmatter(text.slice(0, 4000));
+  const anchor = fm ? Math.min(fm.to + 1, text.length) : 0;
+  view.setState(
+    EditorState.create({ doc: text, extensions: baseExtensions, selection: { anchor } })
+  );
 }
 
 view.focus();
@@ -667,6 +985,7 @@ async function openPath(path) {
   currentPath = path;
   fileRemoved = false;
   lastDiskContent = text;
+  await loadEditorConfig(path);
   loadDocument(text);
   reportDirty();
   updateTitle();
@@ -708,7 +1027,7 @@ async function saveCurrent() {
     currentPath = path;
   }
   try {
-    await writeFile(path, applyEol(text));
+    await writeFile(path, contentForDisk(text));
   } catch (e) {
     // A failed write used to fail silently, which is the worst outcome: you
     // carry on believing the file is on disk.
@@ -735,8 +1054,10 @@ async function saveAs() {
   if (!path) return false;
   const text = view.state.doc.toString();
   const oldPath = currentPath;
+  // The new location may sit under a different .editorconfig.
+  await loadEditorConfig(path);
   try {
-    await writeFile(path, applyEol(text));
+    await writeFile(path, contentForDisk(text));
   } catch (e) {
     jsLog(`save as failed: ${e}`);
     showToast("⚠️ Couldn’t save");
@@ -1055,6 +1376,9 @@ if (isTauri) {
           break;
         case "export_pdf":
           exportPdf();
+          break;
+        case "show_diff":
+          showSaveDiff();
           break;
         case "undo":
           undo(view);

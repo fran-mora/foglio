@@ -7,6 +7,9 @@ import {
   parseTable,
   parseImage,
   resolveImagePath,
+  parseFrontmatter,
+  findInlineMath,
+  findDisplayMath,
 } from "../src/markdown.js";
 
 describe("escapeHtml", () => {
@@ -199,5 +202,112 @@ describe("resolveImagePath", () => {
 
   it("leaves a relative path alone when no document is open", () => {
     expect(resolveImagePath("logo.png", null).src).toBe("logo.png");
+  });
+});
+
+describe("parseFrontmatter", () => {
+  const doc = "---\ntitle: Hello World\ndate: 2026-07-29\ndraft: true\n---\n\n# Body\n";
+
+  it("reads keys and values from a leading block", () => {
+    const fm = parseFrontmatter(doc);
+    expect(fm.entries).toEqual([
+      { key: "title", value: "Hello World" },
+      { key: "date", value: "2026-07-29" },
+      { key: "draft", value: "true" },
+    ]);
+  });
+
+  it("spans exactly the block, so the body is left alone", () => {
+    const fm = parseFrontmatter(doc);
+    expect(doc.slice(fm.from, fm.to)).toBe("---\ntitle: Hello World\ndate: 2026-07-29\ndraft: true\n---");
+    expect(doc.slice(fm.to)).toBe("\n\n# Body\n");
+  });
+
+  it("strips surrounding quotes from values", () => {
+    const fm = parseFrontmatter('---\ntitle: "Quoted"\nother: \'single\'\n---\n');
+    expect(fm.entries).toEqual([
+      { key: "title", value: "Quoted" },
+      { key: "other", value: "single" },
+    ]);
+  });
+
+  it("skips nested lines rather than mangling them", () => {
+    const fm = parseFrontmatter("---\ntags:\n  - one\n  - two\ntitle: X\n---\n");
+    expect(fm.entries).toEqual([
+      { key: "tags", value: "" },
+      { key: "title", value: "X" },
+    ]);
+  });
+
+  it("ignores comments and blank lines", () => {
+    const fm = parseFrontmatter("---\n# a comment\n\ntitle: X\n---\n");
+    expect(fm.entries).toEqual([{ key: "title", value: "X" }]);
+  });
+
+  it("returns null when there is no frontmatter", () => {
+    expect(parseFrontmatter("# Just a heading\n")).toBeNull();
+    expect(parseFrontmatter("\n---\ntitle: X\n---\n")).toBeNull(); // must be at the very top
+  });
+
+  it("returns null for an unterminated block rather than eating the file", () => {
+    expect(parseFrontmatter("---\ntitle: X\n\n# Body\n")).toBeNull();
+  });
+
+  it("accepts the ... terminator YAML also allows", () => {
+    const fm = parseFrontmatter("---\ntitle: X\n...\n\nbody\n");
+    expect(fm.entries).toEqual([{ key: "title", value: "X" }]);
+  });
+
+  it("handles CRLF documents", () => {
+    const fm = parseFrontmatter("---\r\ntitle: X\r\n---\r\n\r\nbody\r\n");
+    expect(fm.entries).toEqual([{ key: "title", value: "X" }]);
+  });
+});
+
+describe("math detection", () => {
+  it("finds inline math", () => {
+    const m = findInlineMath("Euler: $e^{i\\pi}+1=0$ done");
+    expect(m).toHaveLength(1);
+    expect(m[0].tex).toBe("e^{i\\pi}+1=0");
+  });
+
+  it("finds several spans on a line", () => {
+    expect(findInlineMath("$a$ and $b$").map((x) => x.tex)).toEqual(["a", "b"]);
+  });
+
+  it("gives offsets that slice back to the original span", () => {
+    const text = "before $x^2$ after";
+    const [m] = findInlineMath(text);
+    expect(text.slice(m.from, m.to)).toBe("$x^2$");
+  });
+
+  it("leaves currency alone", () => {
+    expect(findInlineMath("it costs $5 or $10 total")).toEqual([]);
+    expect(findInlineMath("$100 and $200")).toEqual([]);
+  });
+
+  it("does not open on a space after the dollar", () => {
+    expect(findInlineMath("a $ b $ c")).toEqual([]);
+  });
+
+  it("ignores an escaped dollar", () => {
+    expect(findInlineMath("\\$not math\\$")).toEqual([]);
+  });
+
+  it("finds display blocks and their bounds", () => {
+    const doc = "text\n\n$$\n\\int_0^1 x dx\n$$\n\nmore\n";
+    const [d] = findDisplayMath(doc);
+    expect(d.tex).toBe("\\int_0^1 x dx");
+    expect(doc.slice(d.from, d.to)).toBe("$$\n\\int_0^1 x dx\n$$");
+  });
+
+  it("ignores an unclosed display block", () => {
+    expect(findDisplayMath("$$\nx\n\nnope\n")).toEqual([]);
+  });
+
+  it("uses no regex feature old WebKit lacks", () => {
+    // A lookbehind would throw at parse time on macOS 11.
+    const src = findInlineMath.toString();
+    expect(src).not.toMatch(/\(\?<[=!]/);
   });
 });

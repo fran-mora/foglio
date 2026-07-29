@@ -168,6 +168,37 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
     })
 }
 
+// Walks up from the document's directory collecting .editorconfig files,
+// nearest last so the caller can apply them in order. Stops at a file
+// declaring `root = true`, which is what the format says to do.
+#[tauri::command]
+fn read_editorconfig(path: String) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut dir = PathBuf::from(&path);
+    dir.pop();
+
+    loop {
+        let candidate = dir.join(".editorconfig");
+        if let Ok(text) = std::fs::read_to_string(&candidate) {
+            let is_root = text
+                .lines()
+                .map(str::trim)
+                .any(|l| l.replace(' ', "").eq_ignore_ascii_case("root=true"));
+            found.push(text);
+            if is_root {
+                break;
+            }
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+
+    found.reverse(); // outermost first, nearest last
+    log(&format!("read_editorconfig({}) -> {} file(s)", path, found.len()));
+    found
+}
+
 #[tauri::command]
 fn js_log(msg: String) {
     log(&format!("js: {}", msg));
@@ -350,6 +381,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "export_pdf", "Export as PDF…", true, Some("CmdOrCtrl+P"))?,
             &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "show_diff", "Changes Since Save…", true, Some("Shift+CmdOrCtrl+D"))?,
+            &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, Some("Close Window"))?,
         ],
     )?;
@@ -528,6 +561,7 @@ pub fn run() {
             deliver_path,
             read_text_file,
             write_text_file,
+            read_editorconfig,
             js_log,
             watch_file,
             unwatch_file,
