@@ -38,10 +38,12 @@ body {
   flex-direction: column;
 }
 
+/* Dragging comes from data-tauri-drag-region on the element in index.html.
+   -webkit-app-region, which this used to rely on, is a Chromium feature and
+   has no effect in the WKWebView Tauri uses. */
 #titlebar {
   height: 28px;
   flex: 0 0 auto;
-  -webkit-app-region: drag;
   user-select: none;
   display: flex;
   justify-content: flex-end;
@@ -50,7 +52,6 @@ body {
 }
 
 #export-pdf {
-  -webkit-app-region: no-drag;
   appearance: none;
   background: transparent;
   border: 1px solid var(--rule);
