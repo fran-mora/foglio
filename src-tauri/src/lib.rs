@@ -402,6 +402,29 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         ],
     )?;
 
+    // A macOS app puts these on the menu bar or nobody finds them. The
+    // accelerators are claimed here rather than in the webview: a native menu
+    // sees the keystroke first, so the frontend keymap would never run.
+    let format_menu = Submenu::with_items(
+        app,
+        "Format",
+        true,
+        &[
+            &MenuItem::with_id(app, "bold", "Bold", true, Some("CmdOrCtrl+B"))?,
+            &MenuItem::with_id(app, "italic", "Italic", true, Some("CmdOrCtrl+I"))?,
+            &MenuItem::with_id(
+                app,
+                "strikethrough",
+                "Strikethrough",
+                true,
+                Some("Shift+CmdOrCtrl+X"),
+            )?,
+            &MenuItem::with_id(app, "code", "Code", true, Some("CmdOrCtrl+E"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "link", "Link", true, Some("CmdOrCtrl+K"))?,
+        ],
+    )?;
+
     let view_menu = Submenu::with_items(
         app,
         "View",
@@ -427,7 +450,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     Menu::with_items(
         app,
-        &[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu],
+        &[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &format_menu,
+            &view_menu,
+            &window_menu,
+        ],
     )
 }
 

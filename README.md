@@ -57,6 +57,13 @@ Requires macOS 11 or later, on Apple Silicon or Intel. The window chrome and Fin
 | ⌘F | Find |
 | ⇧⌘D | Show what would change on disk |
 | ⌘+ ⌘− ⌘0 | Zoom in, out, reset |
+| ⌘B ⌘I | Bold, italic |
+| ⇧⌘X ⌘E | Strikethrough, inline code |
+| ⌘K | Link |
+
+The formatting keys wrap the selection in the markdown for it, and take it back
+off if it is already there. With nothing selected they act on the word the
+caret is in.
 
 ## Roadmap
 

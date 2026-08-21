@@ -1,4 +1,9 @@
-import { EditorState, StateField, StateEffect } from "@codemirror/state";
+import {
+  EditorState,
+  EditorSelection,
+  StateField,
+  StateEffect,
+} from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -40,6 +45,7 @@ import {
   wouldBreakHardLineBreaks,
 } from "./editorconfig.js";
 import { changedHunks, diffStats, isWhitespaceOnlyChange } from "./diff.js";
+import { toggleWrap, toggleLink } from "./format.js";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -578,8 +584,17 @@ function buildDecorations(state) {
           Decoration.mark({ class: "tok-link" }).range(node.from, node.to)
         );
       } else if (name === "URL") {
-        const line = state.doc.lineAt(node.from);
-        if (line.number === cursorLine) {
+        // Only a [text](url) destination is a hideable marker, because the link
+        // text stays behind to stand for it. Every other URL *is* the visible
+        // text: a GFM autolink (a bare email or www. host) parses as a lone URL
+        // under the paragraph with no Link wrapper, <https://...> puts one under
+        // Autolink, and a [ref]: definition puts one under LinkReference.
+        // Hiding those erased the text off the line, so they stay shown.
+        if (node.node.parent?.name !== "Link") {
+          builder.push(
+            Decoration.mark({ class: "tok-link" }).range(node.from, node.to)
+          );
+        } else if (state.doc.lineAt(node.from).number === cursorLine) {
           builder.push(
             Decoration.mark({ class: "tok-marker" }).range(node.from, node.to)
           );
@@ -876,6 +891,45 @@ function reportDirty() {
   rpc("set_dirty", { dirty: d }).catch(() => {});
 }
 
+// ⌘B and friends. format.js decides which edits to make; this turns that into
+// one transaction per selected range, so a whole multi-cursor toggle is a
+// single undo step. Only markers move — the surrounding text is never rewritten.
+function formatCommand(transform) {
+  return (view) => {
+    if (view.state.readOnly) return false;
+    // A window over the document rather than a copy of it: adding two stars in
+    // a very large file should not stringify the whole thing first.
+    const text = view.state.doc;
+    const doc = {
+      length: text.length,
+      slice: (from, to) => text.sliceString(from, to),
+    };
+    view.dispatch(
+      view.state.changeByRange((range) => {
+        const r = transform(doc, range.from, range.to);
+        return {
+          changes: r.changes,
+          range: EditorSelection.range(r.anchor, r.head),
+        };
+      }),
+      // Tagged so history keeps it separate: an untagged change counts as
+      // joinable, and a ⌘B within half a second of typing would then fold into
+      // the same undo step as the words it was applied to.
+      { scrollIntoView: true, userEvent: "input.format" }
+    );
+    return true;
+  };
+}
+
+const wrapCommand = (marker) =>
+  formatCommand((doc, from, to) => toggleWrap(doc, from, to, marker));
+
+const toggleBold = wrapCommand("**");
+const toggleItalic = wrapCommand("*");
+const toggleStrikethrough = wrapCommand("~~");
+const toggleCode = wrapCommand("`");
+const toggleLinkCmd = formatCommand(toggleLink);
+
 const baseExtensions = [
     EditorView.updateListener.of((u) => {
       if (u.docChanged) reportDirty();
@@ -899,6 +953,15 @@ const baseExtensions = [
     search({ top: true }),
     highlightSelectionMatches(),
     keymap.of([
+      // Ahead of defaultKeymap deliberately: the first binding for a key that
+      // returns true wins, and defaultKeymap has ⌘I on selectParentSyntax.
+      // In the packaged app these rarely fire — the native Format menu claims
+      // the accelerators first — but they are what `npm run dev` exercises.
+      { key: "Mod-b", run: toggleBold },
+      { key: "Mod-i", run: toggleItalic },
+      { key: "Mod-Shift-x", run: toggleStrikethrough },
+      { key: "Mod-e", run: toggleCode },
+      { key: "Mod-k", run: toggleLinkCmd },
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap,
@@ -1399,6 +1462,26 @@ if (isTauri) {
           }
           break;
         }
+        case "bold":
+          toggleBold(view);
+          view.focus();
+          break;
+        case "italic":
+          toggleItalic(view);
+          view.focus();
+          break;
+        case "strikethrough":
+          toggleStrikethrough(view);
+          view.focus();
+          break;
+        case "code":
+          toggleCode(view);
+          view.focus();
+          break;
+        case "link":
+          toggleLinkCmd(view);
+          view.focus();
+          break;
         case "zoom_in":
           zoomBy(1);
           break;

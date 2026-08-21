@@ -88,4 +88,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ## Notes
 
 - A build without `APPLE_SIGNING_IDENTITY` set is unsigned, which is what contributors get. Only release builds need the certificate.
+- Renaming or moving the checkout poisons `src-tauri/target`: cargo bakes absolute paths in, and the build dies reading a permissions `.toml` under the *old* directory. Delete the release artifacts and build again — `debug/` can stay.
+
+  ```sh
+  rm -rf src-tauri/target/{aarch64,x86_64,universal}-apple-darwin src-tauri/target/release
+  ```
 - `lipo -archs <app>/Contents/MacOS/foglio` confirms a universal build really carries both architectures. It should print `x86_64 arm64`.

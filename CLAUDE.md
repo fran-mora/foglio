@@ -49,12 +49,30 @@ are silent, not loud.
 - Table cells go through `innerHTML`: escape first, and restrict link schemes to
   http/https/mailto. `marked` passes raw HTML through, so exported files carry a
   CSP.
+- Hide a `URL` node only when its parent is `Link`. There the link text stands
+  in for it; everywhere else the URL *is* the visible text and hiding it wipes
+  the text off the line. A GFM autolink (bare email or `www.` host) parses as a
+  lone `URL` under the paragraph, `<https://…>` puts one under `Autolink`, and
+  a `[ref]:` definition under `LinkReference`.
+
+## Keyboard shortcuts
+
+- A shortcut needs both halves: the binding in the CodeMirror keymap and the
+  menu item in `lib.rs`. The native accelerator fires first in the packaged
+  app, so a keymap-only binding looks dead there; `npm run dev` is the other
+  way round and exercises only the keymap.
+- Put custom bindings *before* `...defaultKeymap`. The first binding for a key
+  that returns true wins, and defaultKeymap already owns ⌘I (selectParentSyntax)
+  and ⇧⌘K (deleteLine).
+- Give an editing command a `userEvent` history will not join, such as
+  `input.format`. An untagged change folds into the undo step of whatever was
+  typed in the half second before it.
 
 ## Testing
 
 Pure logic lives in `src/markdown.js`, `src/editorconfig.js`, `src/diff.js` and
-is unit tested. Everything visual is verified by running the app and looking at
-it — every bug found here so far has been visual.
+`src/format.js`, and is unit tested. Everything visual is verified by running
+the app and looking at it — every bug found here so far has been visual.
 
 - Drive the UI with Playwright **webkit** against `npm run dev`. Chromium will
   lie to you. Synthetic CGEvent clicks do not reach the app at all.
