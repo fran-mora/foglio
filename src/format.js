@@ -154,3 +154,68 @@ export function toggleLink(doc, from, to) {
   const caret = selected ? from + selected.length + 3 : from + 1;
   return { changes: [{ from, to, insert }], anchor: caret, head: caret };
 }
+
+// ⌘U. Markdown has no underline, so this is the one shortcut that writes HTML:
+// `<u>…</u>`, which `marked` passes through to an export and which every other
+// markdown tool leaves as literal text. Asymmetric markers, so toggleWrap —
+// which counts a single delimiter run on both sides — cannot express it.
+const OPEN = "<u>";
+const CLOSE = "</u>";
+
+export function toggleUnderline(doc, from, to) {
+  ({ from, to } = narrow(doc, from, to, ""));
+
+  // Already wrapped, either with the tags inside the selection or just outside
+  // it, so selecting the word and selecting the whole `<u>word</u>` both undo.
+  const inside =
+    to - from >= OPEN.length + CLOSE.length &&
+    doc.slice(from, from + OPEN.length) === OPEN &&
+    doc.slice(to - CLOSE.length, to) === CLOSE;
+  if (inside) {
+    return {
+      changes: [
+        { from, to: from + OPEN.length },
+        { from: to - CLOSE.length, to },
+      ],
+      anchor: from,
+      head: to - OPEN.length - CLOSE.length,
+    };
+  }
+
+  let span = from === to ? wordAt(doc, from) : { from, to };
+  if (span) {
+    const a = span.from;
+    const b = span.to;
+    if (
+      doc.slice(a - OPEN.length, a) === OPEN &&
+      doc.slice(b, b + CLOSE.length) === CLOSE
+    ) {
+      return {
+        changes: [
+          { from: a - OPEN.length, to: a },
+          { from: b, to: b + CLOSE.length },
+        ],
+        anchor: a - OPEN.length,
+        head: b - OPEN.length,
+      };
+    }
+  }
+
+  if (!span) {
+    // No word to take: open an empty pair and leave the caret inside it.
+    return {
+      changes: [{ from, to, insert: OPEN + CLOSE }],
+      anchor: from + OPEN.length,
+      head: from + OPEN.length,
+    };
+  }
+
+  return {
+    changes: [
+      { from: span.from, to: span.from, insert: OPEN },
+      { from: span.to, to: span.to, insert: CLOSE },
+    ],
+    anchor: span.from + OPEN.length,
+    head: span.to + OPEN.length,
+  };
+}

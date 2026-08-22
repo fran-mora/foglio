@@ -60,10 +60,20 @@ Requires macOS 11 or later, on Apple Silicon or Intel. The window chrome and Fin
 | ⌘B ⌘I | Bold, italic |
 | ⇧⌘X ⌘E | Strikethrough, inline code |
 | ⌘K | Link |
+| ⌘U | Underline |
+| Tab ⇧Tab | Indent, outdent a list item |
 
 The formatting keys wrap the selection in the markdown for it, and take it back
 off if it is already there. With nothing selected they act on the word the
-caret is in.
+caret is in. Underline is the one that is not markdown — there is no such thing
+— so it writes `<u>…</u>`, which survives an export but which some other
+markdown tools will show as plain text.
+
+Tab nests a list item under the one above it, matching whatever indent that
+item's own marker asks for, and ⇧Tab takes it back out. A selection spanning
+several items moves as a block and keeps its shape. Numbers are never rewritten:
+the list stays the text you typed. Each level of nesting gets its own bullet —
+•, ◦, ▪ — so depth is readable without counting spaces.
 
 ## Roadmap
 

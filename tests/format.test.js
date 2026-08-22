@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toggleWrap, toggleLink } from "../src/format.js";
+import { toggleWrap, toggleLink, toggleUnderline } from "../src/format.js";
 
 // Applies the returned changes to the document and marks the resulting
 // selection with pipes, so a case reads as the thing the user would see.
@@ -117,5 +117,58 @@ describe("toggleLink", () => {
 
   it("ignores a trailing space in the selection", () => {
     expect(link("see the docs ", 4, 13)).toBe("see [the docs](||) ");
+  });
+});
+
+describe("toggleUnderline", () => {
+  const run = (text, from, to) => {
+    const r = toggleUnderline(text, from, to);
+    let out = text;
+    for (const c of [...r.changes].sort((a, b) => b.from - a.from)) {
+      out = out.slice(0, c.from) + (c.insert || "") + out.slice(c.to);
+    }
+    return out;
+  };
+
+  it("wraps a selection in the one tag markdown does not have", () => {
+    expect(run("hello world", 0, 11)).toBe("<u>hello world</u>");
+  });
+
+  it("takes the word the caret is in when nothing is selected", () => {
+    expect(run("hello world", 2, 2)).toBe("<u>hello</u> world");
+  });
+
+  it("unwraps when the tags are inside the selection", () => {
+    expect(run("<u>hello</u>", 0, 12)).toBe("hello");
+  });
+
+  it("unwraps when the selection is just the text between the tags", () => {
+    expect(run("<u>hello</u>", 3, 8)).toBe("hello");
+  });
+
+  it("unwraps from a bare caret inside the word", () => {
+    expect(run("<u>hello</u>", 5, 5)).toBe("hello");
+  });
+
+  it("opens an empty pair when there is no word to take", () => {
+    const r = toggleUnderline("", 0, 0);
+    expect(run("", 0, 0)).toBe("<u></u>");
+    expect(r.anchor).toBe(3);
+    expect(r.head).toBe(3);
+  });
+
+  it("keeps trailing spaces outside the tags", () => {
+    expect(run("hello world", 0, 6)).toBe("<u>hello</u> world");
+  });
+
+  it("leaves the selection on the same text, so a second press undoes it", () => {
+    const once = toggleUnderline("hello", 0, 5);
+    expect(once.anchor).toBe(3);
+    expect(once.head).toBe(8);
+    expect(run("<u>hello</u>", once.anchor, once.head)).toBe("hello");
+  });
+
+  it("stacks with the markdown shortcuts", () => {
+    expect(run("**bold**", 0, 8)).toBe("<u>**bold**</u>");
   });
 });

@@ -45,7 +45,8 @@ import {
   wouldBreakHardLineBreaks,
 } from "./editorconfig.js";
 import { changedHunks, diffStats, isWhitespaceOnlyChange } from "./diff.js";
-import { toggleWrap, toggleLink } from "./format.js";
+import { toggleWrap, toggleLink, toggleUnderline } from "./format.js";
+import { indentList, listLine, outdentList } from "./list.js";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -148,16 +149,36 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
+// One glyph per nesting level, so how deep an item sits is readable without
+// counting spaces. Three of them, then it starts over: past that the
+// indentation carries the meaning on its own.
+const BULLETS = ["•", "◦", "▪"];
+
 class BulletWidget extends WidgetType {
-  eq() {
-    return true;
+  constructor(level) {
+    super();
+    this.level = level;
+  }
+  // Must compare the level. A widget that claims to equal every other one is
+  // never rebuilt, so an indented item would keep the glyph of its old depth.
+  eq(other) {
+    return other.level === this.level;
   }
   toDOM() {
     const span = document.createElement("span");
-    span.className = "md-bullet";
-    span.textContent = "•";
+    span.className = `md-bullet md-bullet-${this.level % BULLETS.length}`;
+    span.textContent = BULLETS[this.level % BULLETS.length];
     return span;
   }
+}
+
+// How many lists deep a node sits, counting from zero at the outermost.
+function listDepth(node) {
+  let depth = -1;
+  for (let n = node; n; n = n.parent) {
+    if (n.name === "BulletList" || n.name === "OrderedList") depth++;
+  }
+  return Math.max(0, depth);
 }
 
 // Resolve a markdown image target to something the webview can load.
@@ -416,6 +437,9 @@ function buildDecorations(state) {
   // Math is not part of the markdown grammar either, so it is matched over the
   // text. Display blocks first, then inline spans outside them and outside code.
   const docText = state.doc.toString();
+  // <u> and </u> arrive as a flat run of siblings with nothing tying them
+  // together, so they are collected here and paired after the walk.
+  const htmlTags = [];
   const mathRanges = [];
 
   for (const block of findDisplayMath(docText)) {
@@ -572,13 +596,14 @@ function buildDecorations(state) {
             builder.push(Decoration.replace({}).range(node.from, node.to));
           } else {
             builder.push(
-              Decoration.replace({ widget: new BulletWidget() }).range(
-                node.from,
-                node.to
-              )
+              Decoration.replace({
+                widget: new BulletWidget(listDepth(node.node)),
+              }).range(node.from, node.to)
             );
           }
         }
+      } else if (name === "HTMLTag") {
+        htmlTags.push({ from: node.from, to: node.to });
       } else if (name === "Link") {
         builder.push(
           Decoration.mark({ class: "tok-link" }).range(node.from, node.to)
@@ -621,6 +646,38 @@ function buildDecorations(state) {
       }
     },
   });
+
+  // The only inline HTML the editor renders. ⌘U has nowhere else to write an
+  // underline — markdown has no syntax for one — so the tags it produces are
+  // hidden and drawn the way every other marker is. Nothing else in a document
+  // is treated as HTML; a stray <b> stays visible as the text it is.
+  const open = [];
+  for (const tag of htmlTags) {
+    const text = state.doc.sliceString(tag.from, tag.to).toLowerCase();
+    if (text === "<u>") {
+      open.push(tag);
+      continue;
+    }
+    if (text !== "</u>" || !open.length) continue;
+    const start = open.pop();
+    const onIt =
+      cursorLine >= state.doc.lineAt(start.from).number &&
+      cursorLine <= state.doc.lineAt(tag.to).number;
+    // An empty pair has nothing between the tags, and a zero-length mark is
+    // not a range CodeMirror will take.
+    if (tag.from > start.to) {
+      builder.push(
+        Decoration.mark({ class: "md-underline" }).range(start.to, tag.from)
+      );
+    }
+    for (const t of [start, tag]) {
+      builder.push(
+        onIt
+          ? Decoration.mark({ class: "tok-marker" }).range(t.from, t.to)
+          : Decoration.replace({}).range(t.from, t.to)
+      );
+    }
+  }
 
   builder.sort((a, b) => a.from - b.from || a.startSide - b.startSide);
   return Decoration.set(builder, true);
@@ -929,6 +986,58 @@ const toggleItalic = wrapCommand("*");
 const toggleStrikethrough = wrapCommand("~~");
 const toggleCode = wrapCommand("`");
 const toggleLinkCmd = formatCommand(toggleLink);
+const toggleUnderlineCmd = formatCommand(toggleUnderline);
+
+// Is the caret's line a list item? The text answers that; the syntax tree is
+// only asked whether the line is really prose, since a `- item` typed inside a
+// fenced code block looks exactly the same.
+//
+// Resolve at the marker rather than at the caret. A caret at the end of a line
+// sits on the item's closing boundary, where resolveInner hands back the list
+// that contains the item instead of the item itself — and the end of a line is
+// where a caret lands when you click after the last word.
+function inListItem(state, pos) {
+  const line = state.doc.lineAt(pos);
+  const info = listLine(line.text);
+  if (!info) return false;
+  for (
+    let n = syntaxTree(state).resolveInner(line.from + info.indent, 1);
+    n;
+    n = n.parent
+  ) {
+    if (n.name === "ListItem") return true;
+    if (n.name === "FencedCode" || n.name === "CodeBlock") return false;
+  }
+  return false;
+}
+
+// Tab and ⇧Tab. These move whole lines rather than a range of characters, so
+// unlike the emphasis commands they run once over the outermost selection.
+// Returning false hands the key back: Tab outside a list keeps its usual job
+// of moving focus, which is the only way out of the editor without a mouse.
+function listCommand(transform) {
+  return (view) => {
+    if (view.state.readOnly) return false;
+    const sel = view.state.selection.main;
+    if (!inListItem(view.state, sel.from)) return false;
+    const r = transform(view.state.doc, sel.from, sel.to);
+    if (!r) return false;
+    // An empty change list means the item is already as deep or as shallow as
+    // it can go. Swallow the key anyway: Tab inside a list must never jump the
+    // focus somewhere else.
+    if (r.changes.length) {
+      view.dispatch({
+        changes: r.changes,
+        scrollIntoView: true,
+        userEvent: "input.indent",
+      });
+    }
+    return true;
+  };
+}
+
+const indentListCmd = listCommand(indentList);
+const outdentListCmd = listCommand(outdentList);
 
 const baseExtensions = [
     EditorView.updateListener.of((u) => {
@@ -962,6 +1071,11 @@ const baseExtensions = [
       { key: "Mod-Shift-x", run: toggleStrikethrough },
       { key: "Mod-e", run: toggleCode },
       { key: "Mod-k", run: toggleLinkCmd },
+      // historyKeymap owns ⌘U (undoSelection), so this has to come first too.
+      { key: "Mod-u", run: toggleUnderlineCmd },
+      // Tab is not a menu accelerator, so unlike the others this one half is
+      // the whole binding.
+      { key: "Tab", run: indentListCmd, shift: outdentListCmd },
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap,
@@ -1480,6 +1594,10 @@ if (isTauri) {
           break;
         case "link":
           toggleLinkCmd(view);
+          view.focus();
+          break;
+        case "underline":
+          toggleUnderlineCmd(view);
           view.focus();
           break;
         case "zoom_in":

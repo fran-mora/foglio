@@ -414,6 +414,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItem::with_id(app, "italic", "Italic", true, Some("CmdOrCtrl+I"))?,
             &MenuItem::with_id(
                 app,
+                "underline",
+                "Underline",
+                true,
+                Some("CmdOrCtrl+U"),
+            )?,
+            &MenuItem::with_id(
+                app,
                 "strikethrough",
                 "Strikethrough",
                 true,

@@ -567,6 +567,23 @@ body {
   color: var(--muted);
   font-weight: 700;
 }
+/* One glyph per nesting level. The deeper ones are drawn smaller and lighter
+   so a long nested list reads as a shape rather than as a wall of marks. */
+.md-bullet-1 {
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+.md-bullet-2 {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+
+/* ⌘U writes <u></u>, the one construct here that is HTML rather than
+   markdown, because markdown has no underline of its own. */
+.md-underline {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
 
 /* syntax highlighting inside fenced code blocks (classHighlighter tokens) */
 .cm-line.md-code .tok-keyword { color: #cf222e; }

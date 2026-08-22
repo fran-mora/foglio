@@ -49,6 +49,9 @@ are silent, not loud.
 - Table cells go through `innerHTML`: escape first, and restrict link schemes to
   http/https/mailto. `marked` passes raw HTML through, so exported files carry a
   CSP.
+- A `WidgetType`'s `eq()` has to compare everything the widget draws with. One
+  that returns true unconditionally is never rebuilt, so an indented bullet
+  keeps the glyph of its old depth.
 - Hide a `URL` node only when its parent is `Link`. There the link text stands
   in for it; everywhere else the URL *is* the visible text and hiding it wipes
   the text off the line. A GFM autolink (bare email or `www.` host) parses as a
@@ -67,12 +70,24 @@ are silent, not loud.
 - Give an editing command a `userEvent` history will not join, such as
   `input.format`. An untagged change folds into the undo step of whatever was
   typed in the half second before it.
+- Tab must return false when the caret is not in a list. It is the only way to
+  move focus out of the editor without a mouse. Which makes a gate that says
+  "not a list" too readily look exactly like a dead key.
+- Resolve the syntax tree at the construct, not at the caret. A caret at the
+  end of a line sits on the node's closing boundary, and `resolveInner` there
+  hands back the parent — so end-of-line, where clicking past the last word
+  puts it, reads as outside the item. Drive a caret test from more than
+  column 0.
+- `markdown()` installs `markdownKeymap` at high precedence, so Enter already
+  continues a list and Backspace already eats its marker. A test that builds a
+  list by typing gets every marker twice — use Playwright's `insertText`.
 
 ## Testing
 
-Pure logic lives in `src/markdown.js`, `src/editorconfig.js`, `src/diff.js` and
-`src/format.js`, and is unit tested. Everything visual is verified by running
-the app and looking at it — every bug found here so far has been visual.
+Pure logic lives in `src/markdown.js`, `src/editorconfig.js`, `src/diff.js`,
+`src/format.js` and `src/list.js`, and is unit tested. Everything visual is
+verified by running the app and looking at it — every bug found here so far has
+been visual.
 
 - Drive the UI with Playwright **webkit** against `npm run dev`. Chromium will
   lie to you. Synthetic CGEvent clicks do not reach the app at all.
